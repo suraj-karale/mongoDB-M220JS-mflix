@@ -200,6 +200,9 @@ export default class MoviesDAO {
       sortStage,
       // TODO Ticket: Faceted Search
       // Add the stages to queryPipeline in the correct order.
+      skipStage,
+      limitStage,
+      facetStage,
     ]
 
     try {
@@ -247,6 +250,8 @@ export default class MoviesDAO {
         .find(query)
         .project(project)
         .sort(sort)
+        .limit(moviesPerPage)
+        .skip(page * moviesPerPage)
     } catch (e) {
       console.error(`Unable to issue find command, ${e}`)
       return { moviesList: [], totalNumMovies: 0 }
@@ -262,7 +267,7 @@ export default class MoviesDAO {
     */
 
     // TODO Ticket: Paging
-    // Use the cursor to only return the movies that belong on the current page
+    // Use the cursor to only return the movies that belong on the current page    
     const displayCursor = cursor.limit(moviesPerPage)
 
     try {
@@ -302,7 +307,30 @@ export default class MoviesDAO {
           $match: {
             _id: ObjectId(id)
           }
-        }
+        },
+        {
+          $lookup: {
+            from: "comments", // We want to find all comments that have the same ID as our movie
+            let: { id: "$_id" }, // Create a local variable "id" which is set to our original "_id" variable in our $match stage
+            pipeline: [
+              {
+                // Find all documents in the comments collection where the movie_id matches our local variable "id"
+                $match: {
+                  $expr: {
+                    $eq: ["$movie_id", "$$id"],
+                  },
+                },
+              },
+              {
+                // Sort the comments so that the most recent ones are first (descending order)
+                $sort: {
+                  date: -1,
+                },
+              },
+            ],
+            as: "comments",
+          },
+        },
       ]
       return await movies.aggregate(pipeline).next()
     } catch (e) {
@@ -315,6 +343,10 @@ export default class MoviesDAO {
 
       // TODO Ticket: Error Handling
       // Catch the InvalidId error by string matching, and then handle it.
+      if ((e.MongoError = "E11000 duplicate key error collection")) {
+        return null
+      }
+      
       console.error(`Something went wrong in getMovieByID: ${e}`)
       throw e
     }
